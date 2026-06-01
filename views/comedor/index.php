@@ -1,8 +1,8 @@
 <?php
-require_once dirname(__DIR__) . '/../../config/config.php';
+require_once dirname(__DIR__) . '/../config/config.php';
 $pageTitle = 'Historial Comedor';
 $activeNav = 'comedor';
-require_once dirname(__DIR__) . '/../layout_header.php';
+require_once dirname(__DIR__) . '/layouts/header.php';
 ?>
 
 <!-- Filters -->
@@ -82,9 +82,13 @@ const BADGE_CLASS = {DESAYUNO:'badge-DESAYUNO',ALMUERZO:'badge-ALMUERZO',CENA:'b
 const LABEL = {DESAYUNO:'☕ Desayuno',ALMUERZO:'🍽️ Almuerzo',CENA:'🌙 Cena'};
 
 async function loadAreas() {
-  const r = await fetch('<?= BASE_URL ?>/api/index.php?/api/areas');
+  const r = await fetch('<?= BASE_URL ?>/api/index.php?action=areas');
   const j = await r.json();
   const sel = document.getElementById('f-area');
+
+  // Limpiamos el contenedor antes de rellenar (evita duplicados si se recarga)
+  sel.innerHTML = '<option value="">Todas las áreas</option>';
+
   j.data.forEach(a => {
     const o = document.createElement('option');
     o.value = a.id_area;
@@ -99,26 +103,43 @@ async function loadComedor() {
   const area  = document.getElementById('f-area').value;
   const tipo  = document.getElementById('f-tipo').value;
 
-  const params = new URLSearchParams({desde,hasta});
+  const params = new URLSearchParams({desde, hasta});
   if (area) params.append('area', area);
   if (tipo) params.append('tipo', tipo);
 
-  // Update export link
-  const exportUrl = `<?= BASE_URL ?>/api/index.php?/api/export/comedor&${params}`;
+  const exportUrl = `<?= BASE_URL ?>/api/index.php?action=export/comedor&${params}`;
   document.getElementById('export-btn').href = exportUrl;
 
   const tbody = document.getElementById('comedor-tbody');
   tbody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-muted">Cargando...</td></tr>';
 
   try {
-    const r = await fetch(`<?= BASE_URL ?>/api/index.php?/api/comedor&${params}`);
-    const j = await r.json();
+    const r = await fetch(`<?= BASE_URL ?>/api/index.php?action=comedor&${params}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'ngrok-skip-browser-warning': 'true'
+      }
+    });
+    
+    // ── DEPURACIÓN ULTRA-CRÍTICA ──
+    const textoCrudo = await r.text();
+    
+    // Si la respuesta contiene etiquetas HTML (como <br /> o <b>), es un error de PHP seguro
+    if (textoCrudo.includes('<br />') || textoCrudo.includes('<b>')) {
+       console.error("❌ ERROR FÍSICO EN TU BACKEND PHP:");
+       console.log(textoCrudo);
+       tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-danger fw-bold">Error interno de PHP/SQL. Abre la consola F12 en tu laptop para leerlo.</td></tr>`;
+       return;
+    }
+
+    const j = JSON.parse(textoCrudo);
     if (!j.success) throw new Error(j.message);
 
     document.getElementById('total-badge').textContent = j.data.length;
 
     // Summary
-    const counts = {DESAYUNO:0,ALMUERZO:0,CENA:0};
+    const counts = {DESAYUNO:0, ALMUERZO:0, CENA:0};
     j.data.forEach(row => { if (counts[row.tipo_evento] !== undefined) counts[row.tipo_evento]++; });
     const sr = document.getElementById('summary-row');
     sr.innerHTML = Object.entries(counts).map(([t,c]) =>
@@ -131,27 +152,32 @@ async function loadComedor() {
     }
 
     tbody.innerHTML = j.data.map(row => {
-      const dt    = row.fecha_hora.split(' ');
-      const fecha = dt[0];
-      const hora  = dt[1]?.substring(0,8) ?? '';
+      // ── CORRECCIÓN DEFINITIVA DE FECHA Y HORA ──
+      const dt    = row.fecha_hora ? row.fecha_hora.split(' ') : [];
+      const fecha = dt[0] || '—';
+      const hora  = dt[1] ? dt[1].substring(0,8) : '—';
+      
       return `<tr>
         <td class="ps-4">
           <span style="font-size:.85rem">${fecha}</span><br>
           <span style="font-family:monospace;font-size:.78rem;color:var(--gray-600)">${hora}</span>
         </td>
         <td><span class="evt-badge ${BADGE_CLASS[row.tipo_evento]||''}">${LABEL[row.tipo_evento]||row.tipo_evento}</span></td>
-        <td><span class="fw-500">${row.nombre_completo}</span></td>
-        <td><span style="font-family:monospace;font-size:.83rem">${row.dni}</span></td>
-        <td><small>${row.nombre_area}</small></td>
+        <td><span class="fw-500">${row.nombre || '—'}</span></td> 
+        <td><span style="font-family:monospace;font-size:.83rem">${row.dni || '—'}</span></td>
+        <td><small>${row.nombre_area || '—'}</small></td>
         <td><small class="text-muted">${row.empresa||'—'}</small></td>
       </tr>`;
     }).join('');
   } catch(e) {
-    tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-danger">Error: ${e.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-danger">Error en JS de la vista: ${e.message}</td></tr>`;
+    console.error("Error capturado en el catch:", e);
   }
 }
+
+
 
 loadAreas().then(() => loadComedor());
 </script>
 
-<?php require_once dirname(__DIR__) . '/../layout_footer.php'; ?>
+<?php require_once dirname(__DIR__) . '/layouts/footer.php'; ?>

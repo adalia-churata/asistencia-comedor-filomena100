@@ -2,7 +2,7 @@
 require_once dirname(__DIR__) . '/../config/config.php';
 $pageTitle = 'Dashboard';
 $activeNav = 'dashboard';
-require_once dirname(__DIR__) . '/layout_header.php';
+require_once dirname(__DIR__) . '/layouts/header.php';
 ?>
 
 <div id="dash-content">
@@ -110,7 +110,16 @@ function detectarTurno() {
 
 async function loadDashboard() {
   try {
-    const r = await fetch('<?= BASE_URL ?>/api/index.php?/api/dashboard');
+    // ⚠️ CORRECCIÓN 1: Cambiamos 'index.php?/api/dashboard' por el parámetro correcto '?action=dashboard'
+    // Además añadimos la cabecera para saltar de inmediato la alerta intermedia de Ngrok
+    const r = await fetch('<?= BASE_URL ?>/api/index.php?action=dashboard', {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'ngrok-skip-browser-warning': 'true' 
+      }
+    });
+    
     const j = await r.json();
     if (!j.success) return;
     const d = j.data;
@@ -124,22 +133,36 @@ async function loadDashboard() {
     document.getElementById('s-salidas').textContent      = d.salidas_laborales;
 
     const tbody = document.getElementById('recent-tbody');
-    if (!d.ultimas_marcaciones.length) {
+    if (!tbody) return; // Validación de seguridad por si el elemento no existe en el DOM
+
+    if (!d.ultimas_marcaciones || !d.ultimas_marcaciones.length) {
       tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4 text-muted">Sin marcaciones hoy</td></tr>';
       return;
     }
+    
     tbody.innerHTML = d.ultimas_marcaciones.map(m => {
-      const hora  = m.fecha_hora.split(' ')[1].substring(0,8);
+      // ⚠️ CORRECCIÓN 2: Controlamos que fecha_hora exista antes de hacer el split para evitar un crash de JS
+      const dt    = m.fecha_hora ? m.fecha_hora.split(' ') : [];
+      const hora  = dt[1] ? dt[1].substring(0, 8) : '—';
+      
       const badge = TIPOS[m.tipo_evento] || '';
       const lbl   = LABELS[m.tipo_evento] || m.tipo_evento;
+      
+      // ⚠️ CORRECCIÓN 3: Cambiamos m.nombre_completo por m.nombre y m.nombre_area por m.area
+      // Tu consulta SQL unificada en api/index.php devuelve 'nombre' y 'area' como alias compartidos
       return `<tr>
         <td class="ps-4"><span style="font-family:var(--bs-font-monospace);font-size:.83rem">${hora}</span></td>
-        <td><span class="fw-500">${m.nombre_completo}</span><br><small class="text-muted">${m.dni}</small></td>
-        <td><small>${m.nombre_area}</small></td>
+        <td>
+          <span class="fw-500">${m.nombre || '—'}</span><br>
+          <small class="text-muted">${m.dni || '—'}</small>
+        </td>
+        <td><small>${m.area || '—'}</small></td>
         <td><span class="evt-badge ${badge}">${lbl}</span></td>
       </tr>`;
     }).join('');
-  } catch(e) { console.error(e); }
+  } catch(e) { 
+    console.error("Error crítico al procesar el Dashboard:", e); 
+  }
 }
 
 document.getElementById('turno-activo').textContent = detectarTurno();
@@ -147,4 +170,4 @@ loadDashboard();
 setInterval(loadDashboard, 30000);
 </script>
 
-<?php require_once dirname(__DIR__) . '/layout_footer.php'; ?>
+<?php require_once dirname(__DIR__) . '/layouts/footer.php'; ?>

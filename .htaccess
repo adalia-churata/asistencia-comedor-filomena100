@@ -1,6 +1,11 @@
 RewriteEngine On
-RewriteBase /
+RewriteBase /asistencia-filomena-100/
 
+# Evita procesar archivos o carpetas reales
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule . index.php
+
+# Reglas de enrutamiento redirigiendo a la carpeta api
+RewriteRule ^api/([^/]+)/([^/]+)/([^/]+)$ api/index.php?action=$1&sub=$2&sub2=$3 [QSA,L]
+RewriteRule ^api/([^/]+)/([^/]+)$ api/index.php?action=$1&sub=$2 [QSA,L]
+RewriteRule ^api/([^/]+)$ api/index.php?action=$1 [QSA,L]

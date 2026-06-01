@@ -7,13 +7,13 @@
 define('APP_NAME',    'SistemaQR Control');
 define('APP_VERSION', '1.0.0');
 define('APP_ROOT',    dirname(__DIR__));
-define('BASE_URL',    '');  // ej: '/attendance-system' si está en subcarpeta
+define('BASE_URL',    '/asistencia-filomena-100');  // ej: '/attendance-system' si está en subcarpeta
 
 // ── Zona horaria ──────────────────────────────────────────────
 date_default_timezone_set('America/Lima');
 
 // ── Base de datos ─────────────────────────────────────────────
-define('DB_HOST',    getenv('DB_HOST')    ?: '192.168.0.230');
+define('DB_HOST',    getenv('DB_HOST')    ?: '192.168.0.228');
 define('DB_PORT',    getenv('DB_PORT')    ?: '3306');
 define('DB_NAME',    getenv('DB_NAME')    ?: 'filomena_100');
 define('DB_USER',    getenv('DB_USER')    ?: 'root');

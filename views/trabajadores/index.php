@@ -1,8 +1,8 @@
 <?php
-require_once dirname(__DIR__) . '/../../config/config.php';
+require_once dirname(__DIR__) . '/../config/config.php';
 $pageTitle = 'Trabajadores';
 $activeNav = 'trabajadores';
-require_once dirname(__DIR__) . '/../layout_header.php';
+require_once dirname(__DIR__) . '/layouts/header.php';
 ?>
 
 <style>
@@ -127,50 +127,70 @@ let areas = [];
 let currentQR = null;
 
 async function loadAreas() {
-  const r = await fetch('<?= BASE_URL ?>/api/index.php?/api/areas');
-  const j = await r.json();
-  areas = j.data;
-  const sel = document.getElementById('f-area-form');
-  sel.innerHTML = areas.map(a => `<option value="${a.id_area}">${a.nombre_area}</option>`).join('');
+  try {
+    // ⚠️ CORRECCIÓN 1: Cambiado a parámetro nativo ?action=areas
+    const r = await fetch('<?= BASE_URL ?>/api/index.php?action=areas', {
+      method: 'GET',
+      headers: { 'Accept': 'application/json', 'ngrok-skip-browser-warning': 'true' }
+    });
+    const j = await r.json();
+    areas = j.data || [];
+    const sel = document.getElementById('f-area-form');
+    if (sel) {
+      sel.innerHTML = areas.map(a => `<option value="${a.id_area}">${a.nombre_area}</option>`).join('');
+    }
+  } catch (e) {
+    console.error("Error al cargar áreas en el formulario:", e);
+  }
 }
 
 async function loadTrabajadores() {
   const q = document.getElementById('search-q').value;
   const params = new URLSearchParams();
   if (q) params.append('q', q);
-  const r = await fetch(`<?= BASE_URL ?>/api/index.php?/api/trabajadores&${params}`);
-  const j = await r.json();
+
   const tbody = document.getElementById('trab-tbody');
+  tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-muted">Cargando...</td></tr>';
 
-  if (!j.data.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-5 text-muted">Sin resultados</td></tr>';
-    return;
+  try {
+    // ⚠️ CORRECCIÓN 2: Cambiado a parámetro nativo ?action=trabajadores
+    const r = await fetch(`<?= BASE_URL ?>/api/index.php?action=trabajadores&${params}`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json', 'ngrok-skip-browser-warning': 'true' }
+    });
+    const j = await r.json();
+    
+    if (!j.data || !j.data.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center py-5 text-muted">Sin resultados</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = j.data.map(t => `<tr>
+      <td class="ps-4"><span class="fw-500">${t.nombre_completo}</span></td>
+      <td><span style="font-family:monospace;font-size:.83rem">${t.dni}</span></td>
+      <td><small>${t.nombre_area || '—'}</small></td>
+      <td><small>${t.cargo || '—'}</small></td>
+      <td><small class="text-muted">${t.empresa || '—'}</small></td>
+      <td><small>${t.fecha_ingreso}</small></td>
+      <td class="text-center">
+        <button class="btn btn-xs btn-outline-primary me-1"
+                onclick='editTrabajador(${JSON.stringify(t)})'
+                data-bs-toggle="modal" data-bs-target="#modal-form"
+                title="Editar">
+          <i class="bi bi-pencil"></i>
+        </button>
+        <button class="btn btn-xs btn-outline-secondary"
+                onclick='mostrarQR("${t.dni}","${t.nombre_completo.replace(/'/g, "\\'")}")'
+                data-bs-toggle="modal" data-bs-target="#qr-modal"
+                title="Ver QR">
+          <i class="bi bi-qr-code"></i>
+        </button>
+      </td>
+    </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-danger">Error de conexión con la API</td></tr>';
+    console.error("Error al listar trabajadores:", e);
   }
-
-  tbody.innerHTML = j.data.map(t => `<tr>
-    <td class="ps-4">
-      <span class="fw-500">${t.nombre_completo}</span>
-    </td>
-    <td><span style="font-family:monospace;font-size:.83rem">${t.dni}</span></td>
-    <td><small>${t.nombre_area}</small></td>
-    <td><small>${t.cargo||'—'}</small></td>
-    <td><small class="text-muted">${t.empresa||'—'}</small></td>
-    <td><small>${t.fecha_ingreso}</small></td>
-    <td class="text-center">
-      <button class="btn btn-xs btn-outline-primary me-1"
-              onclick='editTrabajador(${JSON.stringify(t)})'
-              data-bs-toggle="modal" data-bs-target="#modal-form"
-              title="Editar">
-        <i class="bi bi-pencil"></i>
-      </button>
-      <button class="btn btn-xs btn-outline-secondary"
-              onclick='mostrarQR("${t.dni}","${t.nombre_completo.replace(/'/g,"\'")}")'
-              data-bs-toggle="modal" data-bs-target="#qr-modal"
-              title="Ver QR">
-        <i class="bi bi-qr-code"></i>
-      </button>
-    </td>
-  </tr>`).join('');
 }
 
 function openNew() {
@@ -208,19 +228,36 @@ async function guardarTrabajador() {
   };
 
   const url = id
-    ? `<?= BASE_URL ?>/api/index.php?/api/trabajadores/${id}`
-    : `<?= BASE_URL ?>/api/index.php?/api/trabajadores`;
+    ? `<?= BASE_URL ?>/api/index.php?action=trabajadores&sub=${id}`
+    : `<?= BASE_URL ?>/api/index.php?action=trabajadores`;
   const method = id ? 'PUT' : 'POST';
 
-  const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-  const j = await r.json();
-
-  if (j.success) {
-    bootstrap.Modal.getInstance(document.getElementById('modal-form')).hide();
-    showToast('success', j.message);
-    loadTrabajadores();
-  } else {
-    showToast('error', j.message);
+  try {
+    const r = await fetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true'
+      },
+      body: JSON.stringify(payload)
+    });
+    
+    const j = await r.json();
+    
+    if (j.success) {
+      // Cerrar modal usando Bootstrap nativo
+      const modalEl = document.getElementById('modal-form');
+      const modalInstance = bootstrap.Modal.getInstance(modalEl);
+      if (modalInstance) modalInstance.hide();
+      
+      await loadTrabajadores(); // Recargar listado en caliente
+      alert(j.message || "Guardado exitosamente");
+    } else {
+      alert("Error: " + j.message);
+    }
+  } catch (e) {
+    console.error("Error al guardar:", e);
+    alert("Error de comunicación con el servidor");
   }
 }
 
@@ -257,4 +294,4 @@ function imprimirQR() {
 loadAreas().then(() => loadTrabajadores());
 </script>
 
-<?php require_once dirname(__DIR__) . '/../layout_footer.php'; ?>
+<?php require_once dirname(__DIR__) . '/layouts/footer.php'; ?>

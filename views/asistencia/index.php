@@ -1,8 +1,8 @@
 <?php
-require_once dirname(__DIR__) . '/../../config/config.php';
+require_once dirname(__DIR__) . '/../config/config.php';
 $pageTitle = 'Asistencia Laboral';
 $activeNav = 'asistencia';
-require_once dirname(__DIR__) . '/../layout_header.php';
+require_once dirname(__DIR__) . '/layouts/header.php';
 ?>
 
 <style>
@@ -85,9 +85,15 @@ require_once dirname(__DIR__) . '/../layout_header.php';
 
 <script>
 function fmtHora(dt) {
-  if (!dt) return '<span class="text-muted">—</span>';
-  const parts = dt.split(' ');
-  return `<span style="font-family:monospace;font-size:.82rem">${parts[1]?.substring(0,5)||'—'}</span>`;
+  if (!dt || dt === '—') return '<span class="text-muted">—</span>';
+  
+  // ⚠️ BLINDAJE: Si la variable ya viene formateada como hora pura (HH:MM:SS), evitamos el split
+  let horaLimpia = dt;
+  if (dt.includes(' ')) {
+    horaLimpia = dt.split(' ')[1];
+  }
+  
+  return `<span style="font-family:monospace;font-size:.82rem">${horaLimpia.substring(0, 5)}</span>`;
 }
 
 function fmtHoras(h, tipo) {
@@ -104,14 +110,33 @@ function fmtDiff(d, tipo) {
 }
 
 async function loadAreas() {
-  const r = await fetch('<?= BASE_URL ?>/api/index.php?/api/areas');
-  const j = await r.json();
-  const sel = document.getElementById('f-area');
-  j.data.forEach(a => {
-    const o = document.createElement('option');
-    o.value = a.id_area; o.textContent = a.nombre_area;
-    sel.appendChild(o);
-  });
+  try {
+    // ⚠️ CORRECCIÓN 1: Formato cambiado a parámetro nativo ?action=areas y cabecera de Ngrok añadida
+    const r = await fetch('<?= BASE_URL ?>/api/index.php?action=areas', {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'ngrok-skip-browser-warning': 'true' // Salta la alerta de Ngrok en móviles
+      }
+    });
+    
+    if (!r.ok) throw new Error(`Error ${r.status}`);
+    const j = await r.json();
+    
+    if (!j.success || !j.data) return;
+
+    const sel = document.getElementById('f-area');
+    sel.innerHTML = '<option value="">Todas las áreas</option>'; // Limpiamos duplicados
+    
+    j.data.forEach(a => {
+      const o = document.createElement('option');
+      o.value = a.id_area; 
+      o.textContent = a.nombre_area;
+      sel.appendChild(o);
+    });
+  } catch (e) {
+    console.error("Error al cargar áreas en asistencia:", e);
+  }
 }
 
 async function loadAsistencia() {
@@ -123,14 +148,27 @@ async function loadAsistencia() {
   if (area) params.append('area', area);
 
   document.getElementById('export-btn').href =
-    `<?= BASE_URL ?>/api/index.php?/api/export/asistencia&${params}`;
+    `<?= BASE_URL ?>/api/index.php?action=export/asistencia&${params}`;
 
   const tbody = document.getElementById('asist-tbody');
   tbody.innerHTML = '<tr><td colspan="10" class="text-center py-4 text-muted">Cargando...</td></tr>';
 
   try {
-    const r = await fetch(`<?= BASE_URL ?>/api/index.php?/api/asistencia&${params}`);
-    const j = await r.json();
+    const r = await fetch(`<?= BASE_URL ?>/api/index.php?action=asistencia&${params}`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json', 'ngrok-skip-browser-warning': 'true' }
+    });
+    
+    // ── DEPURACIÓN CRÍTICA: Captura el error real de PHP ──
+    const textoCrudo = await r.text();
+    if (textoCrudo.includes('<br />') || textoCrudo.includes('<b>')) {
+       console.error("❌ ERROR CRÍTICO DETECTADO EN TU VISTA SQL:");
+       console.log(textoCrudo); // <--- AQUÍ VERÁS EL ERROR REAL DE LARAGON
+       tbody.innerHTML = '<tr><td colspan="10" class="text-center py-4 text-danger fw-bold">Error interno de SQL/Vista. Revisa la consola F12.</td></tr>';
+       return;
+    }
+
+    const j = JSON.parse(textoCrudo);
     if (!j.success) throw new Error(j.message);
 
     document.getElementById('total-badge').textContent = j.data.length;
@@ -140,27 +178,35 @@ async function loadAsistencia() {
       return;
     }
 
-    tbody.innerHTML = j.data.map(row => `<tr>
-      <td class="ps-4"><span style="font-size:.85rem">${row.fecha||'—'}</span></td>
-      <td>
-        <span class="fw-500">${row.nombre_completo}</span><br>
-        <small class="text-muted" style="font-family:monospace">${row.dni}</small>
-      </td>
-      <td><small>${row.nombre_area}</small></td>
-      <td class="text-center">${fmtHora(row.hora_ingreso)}</td>
-      <td class="text-center">${fmtHora(row.hora_salida_break)}</td>
-      <td class="text-center">${fmtHora(row.hora_ingreso_break)}</td>
-      <td class="text-center">${fmtHora(row.hora_salida_trabajo)}</td>
-      <td class="text-center">${fmtHoras(row.horas_netas, '')}</td>
-      <td class="text-center"><span class="horas-chip horas-ok">${row.horas_programadas}h</span></td>
-      <td class="text-center">${fmtDiff(row.diferencia_horas, row.tipo_diferencia)}</td>
-    </tr>`).join('');
+    tbody.innerHTML = j.data.map(row => {
+      // Ajustamos dinámicamente si tus campos de horas netas usan nombres alternos en el JSON
+      const netas = row.horas_netas !== undefined ? row.horas_netas : (row.horas_trabajadas || '—');
+      const diff  = row.diferencia !== undefined ? row.diferencia : (row.diferencia_horas || '—');
+
+      return `<tr>
+        <td class="ps-4"><span style="font-size:.85rem">${row.fecha||'—'}</span></td>
+        <td>
+          <span class="fw-500">${row.nombre_completo || row.nombre}</span><br>
+          <small class="text-muted" style="font-family:monospace">${row.dni || '—'}</small>
+        </td>
+        <td><small>${row.nombre_area || '—'}</small></td>
+        <td class="text-center">${fmtHora(row.hora_ingreso)}</td>
+        <td class="text-center">${fmtHora(row.hora_salida_break)}</td>
+        <td class="text-center">${fmtHora(row.hora_ingreso_break)}</td>
+        <td class="text-center">${fmtHora(row.hora_salida_trabajo)}</td>
+        <td class="text-center">${fmtHoras(netas, row.tipo_diferencia)}</td>
+        <td class="text-center"><span class="horas-chip horas-ok">${row.horas_programadas}h</span></td>
+        <td class="text-center">${fmtDiff(diff, row.tipo_diferencia)}</td>
+      </tr>`;
+    }).join('');
+    
   } catch(e) {
-    tbody.innerHTML = `<tr><td colspan="10" class="text-center py-4 text-danger">${e.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="text-center py-4 text-danger">Error al procesar la lista: ${e.message}</td></tr>`;
+    console.error("Error completo en loadAsistencia:", e);
   }
 }
 
 loadAreas().then(() => loadAsistencia());
 </script>
 
-<?php require_once dirname(__DIR__) . '/../layout_footer.php'; ?>
+<?php require_once dirname(__DIR__) . '/layouts/footer.php'; ?>

@@ -1,8 +1,8 @@
 <?php
-require_once dirname(__DIR__) . '/../../config/config.php';
+require_once dirname(__DIR__) . '/../config/config.php';
 $pageTitle = 'Exportar Reportes';
 $activeNav = 'reportes';
-require_once dirname(__DIR__) . '/../layout_header.php';
+require_once dirname(__DIR__) . '/layouts/header.php';
 ?>
 
 <div class="row g-4">
@@ -135,20 +135,49 @@ require_once dirname(__DIR__) . '/../layout_header.php';
 
 <script>
 async function loadAreas() {
-  const r = await fetch('<?= BASE_URL ?>/api/index.php?/api/areas');
-  const j = await r.json();
-  ['c-area','a-area'].forEach(id => {
-    const sel = document.getElementById(id);
-    j.data.forEach(a => {
-      const o = document.createElement('option');
-      o.value = a.id_area; o.textContent = a.nombre_area;
-      sel.appendChild(o.cloneNode(true));
+  try {
+    // ⚠️ CORRECCIÓN 1: Formato cambiado a parámetro nativo ?action=areas y cabecera Ngrok añadida
+    const r = await fetch('<?= BASE_URL ?>/api/index.php?action=areas', {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'ngrok-skip-browser-warning': 'true' // Salta la alerta de Ngrok en celulares
+      }
     });
-  });
+
+    if (!r.ok) throw new Error(`Error de red: ${r.status}`);
+    const j = await r.json();
+
+    // Validamos estrictamente que la respuesta contenga los datos esperados antes de iterar
+    if (!j.success || !j.data || !Array.isArray(j.data)) {
+      console.warn("La API de áreas no devolvió un conjunto de datos válido.");
+      return;
+    }
+
+    // Iteramos de forma segura sobre los dos selects existentes en tu interfaz HTML
+    ['c-area', 'a-area'].forEach(id => {
+      const sel = document.getElementById(id);
+      if (!sel) return;
+
+      // Limpiamos los elementos y dejamos la opción base limpia
+      sel.innerHTML = '<option value="">Todas las áreas</option>';
+
+      j.data.forEach(a => {
+        const o = document.createElement('option');
+        o.value = a.id_area; 
+        o.textContent = a.nombre_area;
+        sel.appendChild(o.cloneNode(true));
+      });
+    });
+
+  } catch (e) {
+    console.error("Error crítico al renderizar las áreas en reportes:", e);
+  }
 }
 
 function exportar(tipo) {
   let url;
+  
   if (tipo === 'comedor') {
     const p = new URLSearchParams({
       desde: document.getElementById('c-desde').value,
@@ -157,10 +186,14 @@ function exportar(tipo) {
     const area    = document.getElementById('c-area').value;
     const comTipo = document.getElementById('c-tipo').value;
     const persona = document.getElementById('c-persona').value;
-    if (area)    p.append('area', area);
+    
+    if (area) p.append('area', area);
     if (comTipo) p.append('tipo', comTipo);
     if (persona && persona !== 'todos') p.append('persona', persona);
-    url = `<?= BASE_URL ?>/api/index.php?/api/export/comedor&${p}`;
+    
+    // ⚠️ CORRECCIÓN 2: Formato de URL cambiado a ?action=export/comedor
+    url = `<?= BASE_URL ?>/api/index.php?action=export/comedor&${p}`;
+    
   } else {
     const p = new URLSearchParams({
       desde: document.getElementById('a-desde').value,
@@ -168,14 +201,23 @@ function exportar(tipo) {
     });
     const area = document.getElementById('a-area').value;
     if (area) p.append('area', area);
-    url = `<?= BASE_URL ?>/api/index.php?/api/export/asistencia&${p}`;
+    
+    // ⚠️ CORRECCIÓN 3: Formato de URL cambiado a ?action=export/asistencia
+    url = `<?= BASE_URL ?>/api/index.php?action=export/asistencia&${p}`;
   }
+
+  // Ejecutamos la redirección nativa para gatillar la descarga del archivo CSV
   window.location.href = url;
-  showToast('success', 'Descarga iniciada', 'El archivo se guardará en tu carpeta de descargas');
+  
+  // Validación preventiva para ejecutar tu componente de alertas si existe en el layout
+  if (typeof showToast === 'function') {
+    showToast('success', 'Descarga iniciada', 'El archivo se guardará en tu carpeta de descargas');
+  }
+  
   return false;
 }
 
 loadAreas();
 </script>
 
-<?php require_once dirname(__DIR__) . '/../layout_footer.php'; ?>
+<?php require_once dirname(__DIR__) . '/layouts/footer.php'; ?>

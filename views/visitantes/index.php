@@ -1,8 +1,8 @@
 <?php
-require_once dirname(__DIR__) . '/../../config/config.php';
+require_once dirname(__DIR__) . '/../config/config.php';
 $pageTitle = 'Visitantes';
 $activeNav = 'visitantes';
-require_once dirname(__DIR__) . '/../layout_header.php';
+require_once dirname(__DIR__) . '/layouts/header.php';
 ?>
 
 <style>
@@ -183,152 +183,185 @@ async function loadVisitantes() {
   grid.innerHTML = '<div class="col-12 text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Cargando...</div>';
 
   try {
-    const r = await fetch(`<?= BASE_URL ?>/api/index.php?/api/visitantes&q=${encodeURIComponent(q)}`);
-    const j = await r.json();
-    const data = j.data || [];
+    const r = await fetch(`<?= BASE_URL ?>/api/index.php?action=visitantes&search=${encodeURIComponent(q)}`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json', 'ngrok-skip-browser-warning': 'true' }
+    });
+    
+    // ── DEPURACIÓN CRÍTICA: Captura el error de PHP antes de fallar ──
+    const textoCrudo = await r.text();
+    if (textoCrudo.includes('<br />') || textoCrudo.includes('<b>')) {
+       console.error("❌ ERROR CRÍTICO DETECTADO EN TU MODELO PHP/SQL:");
+       console.log(textoCrudo); // <--- Aquí verás la línea exacta de SQL que falla
+       grid.innerHTML = '<div class="col-12 text-center py-4 text-danger fw-bold">Error de SQL en el modelo de Visitantes. Revisa la consola F12.</div>';
+       return;
+    }
 
+    const j = JSON.parse(textoCrudo);
+    const data = j.data || [];
+    
     document.getElementById('total-count').textContent = data.length;
 
     if (!data.length) {
       grid.innerHTML = `<div class="col-12 text-center py-5 text-muted">
         <i class="bi bi-person-x fs-2 d-block mb-2 opacity-25"></i>
-        ${q ? 'Sin resultados para "'+q+'"' : 'No hay visitantes registrados'}
+        ${q ? 'Sin resultados para "' + q + '"' : 'No hay visitantes registrados'}
       </div>`;
       return;
     }
 
+    // ── CORRECCIÓN 2: Cierre y renderizado completo del mapeo de tarjetas ──
     grid.innerHTML = data.map(v => {
       const diasStr = v.dias_visitados > 0
-        ? `<span class="badge bg-light text-dark border" style="font-size:.68rem">${v.dias_visitados} visita${v.dias_visitados>1?'s':''}</span>`
+        ? `<span class="badge bg-light text-dark border" style="font-size:.68rem">${v.dias_visitados} visita${v.dias_visitados > 1 ? 's' : ''}</span>`
         : '';
-      const ultimaStr = v.ultima_visita
-        ? `<span class="text-muted" style="font-size:.72rem">Última: ${v.ultima_visita.split(' ')[0]}</span>`
-        : '';
+        
+      // Control de badges de comidas rápidas para el día de hoy
+      const pipDesayuno = v.tuvo_desayuno ? 'done' : '';
+      const pipAlmuerzo = v.tuvo_almuerzo ? 'done' : '';
+      const pipCena     = v.tuvo_cena ? 'done' : '';
 
-      return `<div class="col-12 col-sm-6 col-xl-4">
-        <div class="vis-card" onclick="verHistorial(${v.id_visitante})">
-          <div class="vis-avatar">🪪</div>
-          <div class="flex-grow-1 min-w-0">
-            <div class="vis-name text-truncate">${v.nombre}</div>
-            <div class="vis-empresa text-truncate">🏢 ${v.empresa}</div>
-            ${v.dni ? `<div class="vis-dni">DNI: ${v.dni}</div>` : ''}
-            <div class="d-flex align-items-center gap-2 mt-1">${diasStr} ${ultimaStr}</div>
+      return `
+        <div class="col-md-4 col-sm-6 col-12">
+          <div class="vis-card" onclick="verHistorial(${v.id_visitante}, '${v.nombre.replace(/'/g, "\\'")}', '${v.empresa.replace(/'/g, "\\'")}')">
+            <div class="vis-avatar">👤</div>
+            <div class="flex-grow-1" style="min-width: 0;">
+              <div class="vis-name text-truncate">${v.nombre}</div>
+              <div class="vis-empresa text-truncate">${v.empresa}</div>
+              <div class="d-flex align-items-center gap-2 mt-1">
+                <span class="comida-pip ${pipDesayuno}" title="Desayuno"></span>
+                <span class="comida-pip ${pipAlmuerzo}" title="Almuerzo"></span>
+                <span class="comida-pip ${pipCena}" title="Cena"></span>
+                ${diasStr}
+              </div>
+            </div>
+            <div class="d-flex flex-column gap-1">
+              <button class="btn btn-xs btn-outline-secondary" onclick="event.stopPropagation(); abrirQR(${v.id_visitante}, '${v.nombre.replace(/'/g, "\\'")}', '${v.empresa.replace(/'/g, "\\'")}')" data-bs-toggle="modal" data-bs-target="#modal-qr">
+                <i class="bi bi-qr-code"></i>
+              </button>
+              <button class="btn btn-xs btn-outline-primary" onclick="event.stopPropagation(); editVisitante(${JSON.stringify(v)})" data-bs-toggle="modal" data-bs-target="#modal-form">
+                <i class="bi bi-pencil"></i>
+              </button>
+            </div>
           </div>
-          <div class="d-flex flex-column gap-1">
-            <button class="btn btn-xs btn-outline-secondary"
-                    onclick="event.stopPropagation();editVis(${v.id_visitante})"
-                    data-bs-toggle="modal" data-bs-target="#modal-form"
-                    title="Editar">
-              <i class="bi bi-pencil"></i>
-            </button>
-            <button class="btn btn-xs btn-outline-primary"
-                    onclick="event.stopPropagation();mostrarQR(${v.id_visitante},'${v.nombre.replace(/'/g,"\\'")}','${v.empresa.replace(/'/g,"\\'")}');
-                             bootstrap.Modal.getOrCreateInstance(document.getElementById('modal-qr')).show()"
-                    title="Ver QR">
-              <i class="bi bi-qr-code"></i>
-            </button>
-          </div>
-        </div>
-      </div>`;
+        </div>`;
     }).join('');
 
-  } catch(e) {
-    grid.innerHTML = `<div class="col-12 text-center py-4 text-danger">Error al cargar visitantes</div>`;
+  } catch (e) {
+    grid.innerHTML = '<div class="col-12 text-center py-4 text-danger">Error de comunicación con la API.</div>';
+    console.error("Error al cargar visitantes:", e);
   }
 }
 
 // ── Estadísticas del día ──────────────────────────────────────
 async function loadStatsHoy() {
   try {
-    const r = await fetch('<?= BASE_URL ?>/api/index.php?/api/dashboard');
+    // ⚠️ CORRECCIÓN: Cambiamos 'index.php?/api/dashboard' por '?action=dashboard'
+    const r = await fetch('<?= BASE_URL ?>/api/index.php?action=dashboard', {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'ngrok-skip-browser-warning': 'true' // Salta la advertencia de Ngrok en móviles
+      }
+    });
+
+    if (!r.ok) throw new Error(`Error ${r.status}`);
     const j = await r.json();
     if (!j.success) return;
+    
     const d = j.data;
-    document.getElementById('stats-hoy').innerHTML = `
-      <div class="col-6 col-md-3">
-        <div class="stat-card">
-          <div class="stat-icon" style="background:#fffbeb">☕</div>
-          <div class="stat-value">${d.desayunos_visitantes||0}</div>
-          <div class="stat-label">Desayunos visitantes hoy</div>
+    const statsContainer = document.getElementById('stats-hoy');
+    if (!statsContainer) return;
+
+    // Pintamos las tarjetas resumen de visitantes de hoy en tu plantilla
+    statsContainer.innerHTML = `
+      <div class="col-4">
+        <div class="card border p-2 text-center" style="border-radius:10px">
+          <small class="text-muted d-block" style="font-size:.7rem">DESAYUNOS</small>
+          <span class="fw-700 text-warning" style="font-size:1.1rem">${d.desayunos_visitantes}</span>
         </div>
       </div>
-      <div class="col-6 col-md-3">
-        <div class="stat-card">
-          <div class="stat-icon" style="background:#f5f3ff">🍽️</div>
-          <div class="stat-value">${d.almuerzos_visitantes||0}</div>
-          <div class="stat-label">Almuerzos visitantes hoy</div>
+      <div class="col-4">
+        <div class="card border p-2 text-center" style="border-radius:10px">
+          <small class="text-muted d-block" style="font-size:.7rem">ALMUERZOS</small>
+          <span class="fw-700 text-primary" style="font-size:1.1rem">${d.almuerzos_visitantes}</span>
         </div>
       </div>
-      <div class="col-6 col-md-3">
-        <div class="stat-card">
-          <div class="stat-icon" style="background:#eff6ff">🌙</div>
-          <div class="stat-value">${d.cenas_visitantes||0}</div>
-          <div class="stat-label">Cenas visitantes hoy</div>
+      <div class="col-4">
+        <div class="card border p-2 text-center" style="border-radius:10px">
+          <small class="text-muted d-block" style="font-size:.7rem">CENAS</small>
+          <span class="fw-700 text-success" style="font-size:1.1rem">${d.cenas_visitantes}</span>
         </div>
       </div>
-      <div class="col-6 col-md-3">
-        <div class="stat-card">
-          <div class="stat-icon" style="background:#f0fdf4">🪪</div>
-          <div class="stat-value">${d.total_visitantes||0}</div>
-          <div class="stat-label">Visitantes atendidos hoy</div>
-        </div>
-      </div>`;
-  } catch(e) {}
+    `;
+
+  } catch (e) {
+    console.error("Error al cargar estadísticas rápidas:", e);
+  }
 }
 
 // ── CRUD ─────────────────────────────────────────────────────
 function openNew() {
   document.getElementById('modal-form-title').textContent = 'Nuevo visitante';
-  document.getElementById('f-id').value      = '';
-  document.getElementById('f-nombre').value  = '';
+  document.getElementById('f-id').value = '';
+  document.getElementById('f-nombre').value = '';
   document.getElementById('f-empresa').value = '';
-  document.getElementById('f-dni').value     = '';
+  document.getElementById('f-dni').value = '';
   document.getElementById('activo-row').style.display = 'none';
+  document.getElementById('f-activo').value = '1';
 }
 
-async function editVis(id) {
-  try {
-    const r = await fetch(`<?= BASE_URL ?>/api/index.php?/api/visitantes/${id}`);
-    const j = await r.json();
-    if (!j.success) { showToast('error','No se pudo cargar el visitante'); return; }
-    const v = j.data;
-    document.getElementById('modal-form-title').textContent = 'Editar visitante';
-    document.getElementById('f-id').value      = v.id_visitante;
-    document.getElementById('f-nombre').value  = v.nombre;
-    document.getElementById('f-empresa').value = v.empresa;
-    document.getElementById('f-dni').value     = v.dni || '';
-    document.getElementById('f-activo').value  = v.activo;
-    document.getElementById('activo-row').style.display = 'block';
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('modal-form')).show();
-  } catch(e) { showToast('error','Error de conexión'); }
+function editVisitante(v) {
+  document.getElementById('modal-form-title').textContent = 'Editar visitante';
+  document.getElementById('f-id').value = v.id_visitante;
+  document.getElementById('f-nombre').value = v.nombre;
+  document.getElementById('f-empresa').value = v.empresa;
+  document.getElementById('f-dni').value = v.dni || '';
+  document.getElementById('activo-row').style.display = 'block';
+  document.getElementById('f-activo').value = v.activo !== undefined ? v.activo : '1';
 }
 
 async function guardar() {
-  const id      = document.getElementById('f-id').value;
-  const nombre  = document.getElementById('f-nombre').value.trim();
-  const empresa = document.getElementById('f-empresa').value.trim();
-  const dni     = document.getElementById('f-dni').value.trim();
+  const id = document.getElementById('f-id').value;
+  const payload = {
+    nombre:  document.getElementById('f-nombre').value.trim(),
+    empresa: document.getElementById('f-empresa').value.trim(),
+    dni:     document.getElementById('f-dni').value.trim(),
+    activo:  document.getElementById('f-activo').value
+  };
 
-  if (!nombre)  { showToast('error','El nombre es obligatorio'); return; }
-  if (!empresa) { showToast('error','La empresa es obligatoria'); return; }
+  if (!payload.nombre || !payload.empresa) {
+    alert("Por favor complete los campos obligatorios (*)");
+    return;
+  }
 
-  const payload = { nombre, empresa, dni: dni || null };
-  if (id) payload.activo = document.getElementById('f-activo').value;
-
-  const url    = id ? `<?= BASE_URL ?>/api/index.php?/api/visitantes/${id}` : `<?= BASE_URL ?>/api/index.php?/api/visitantes`;
+  // ⚠️ CORRECCIÓN 3: Formato de URL de guardado unificado usando parámetros nativos
+  const url = id 
+    ? `<?= BASE_URL ?>/api/index.php?action=visitantes&sub=${id}` 
+    : `<?= BASE_URL ?>/api/index.php?action=visitantes`;
   const method = id ? 'PUT' : 'POST';
 
   try {
-    const r = await fetch(url, { method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const r = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
+      body: JSON.stringify(payload)
+    });
     const j = await r.json();
+
     if (j.success) {
-      bootstrap.Modal.getInstance(document.getElementById('modal-form')).hide();
-      showToast('success', j.message);
-      loadVisitantes();
+      const modalEl = document.getElementById('modal-form');
+      const modalInstance = bootstrap.Modal.getInstance(modalEl);
+      if (modalInstance) modalInstance.hide();
+      await loadVisitantes();
+      alert(j.message || "Guardado exitosamente");
     } else {
-      showToast('error', j.message);
+      alert("Error: " + j.message);
     }
-  } catch(e) { showToast('error','Error de conexión'); }
+  } catch (e) {
+    console.error("Error al guardar:", e);
+    alert("Error de comunicación con el servidor");
+  }
 }
 
 // ── QR ───────────────────────────────────────────────────────
@@ -371,40 +404,41 @@ function copiarCodigo() {
 }
 
 // ── Historial ────────────────────────────────────────────────
-async function verHistorial(id) {
-  bootstrap.Modal.getOrCreateInstance(document.getElementById('modal-historial')).show();
-  document.getElementById('hist-body').innerHTML =
-    '<div class="text-center py-4 text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Cargando...</div>';
+async function verHistorial(id, nombre, empresa) {
+  document.getElementById('hist-nombre').textContent = "Historial de " + nombre;
+  document.getElementById('hist-empresa').textContent = empresa;
+  const body = document.getElementById('hist-body');
+  body.innerHTML = '<div class="text-center py-4"><span class="spinner-border spinner-border-sm text-muted me-2"></span>Cargando historial...</div>';
+  
+  // Levantar modal de Bootstrap nativo
+  const modalHist = new bootstrap.Modal(document.getElementById('modal-historial'));
+  modalHist.show();
 
   try {
-    const r = await fetch(`<?= BASE_URL ?>/api/index.php?/api/visitantes/${id}/historial`);
+    // ⚠️ CORRECCIÓN 4: Mapeado a parámetro nativo ?action=visitantes&sub=${id}&sub2=historial
+    const r = await fetch(`<?= BASE_URL ?>/api/index.php?action=visitantes&sub=${id}&sub2=historial`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json', 'ngrok-skip-browser-warning': 'true' }
+    });
     const j = await r.json();
-    if (!j.success) throw new Error(j.message);
+    const records = j.data || [];
 
-    const v = j.data.visitante;
-    document.getElementById('hist-nombre').textContent  = v.nombre;
-    document.getElementById('hist-empresa').textContent = '🏢 ' + v.empresa + (v.dni ? ' · DNI: '+v.dni : '');
-
-    const evts = j.data.eventos;
-    if (!evts.length) {
-      document.getElementById('hist-body').innerHTML =
-        '<div class="text-center py-4 text-muted">Sin eventos registrados</div>';
+    if (!records.length) {
+      body.innerHTML = '<div class="text-center py-4 text-muted">Este visitante no registra consumos en el sistema aún.</div>';
       return;
     }
 
-    document.getElementById('hist-body').innerHTML = evts.map(e => {
-      const dt   = e.fecha_hora.split(' ');
-      const badge = EVT_BADGE[e.tipo_evento] || '';
-      const lbl   = EVT_LABELS[e.tipo_evento] || e.tipo_evento;
-      return `<div class="evt-row">
-        <span class="evt-badge ${badge}" style="min-width:110px;text-align:center">${lbl}</span>
-        <span style="font-family:monospace;font-size:.8rem;color:var(--gray-600)">${dt[0]}</span>
-        <span style="font-family:monospace;font-size:.85rem;font-weight:600">${dt[1]?.substring(0,8)||''}</span>
-        ${e.observacion ? `<small class="text-muted ms-auto">${e.observacion}</small>` : ''}
-      </div>`;
+    body.innerHTML = records.map(r => {
+      const label = EVT_LABELS[r.tipo_evento] || r.tipo_evento;
+      const badge = EVT_BADGE[r.tipo_evento] || 'bg-secondary text-white';
+      return `
+        <div class="evt-row">
+          <div style="font-family:monospace; font-size:.85rem;" class="text-muted">${r.fecha_hora}</div>
+          <div class="ms-auto"><span class="badge ${badge}">${label}</span></div>
+        </div>`;
     }).join('');
 
-  } catch(e) {
+  } catch (e) {
     document.getElementById('hist-body').innerHTML =
       `<div class="text-center py-4 text-danger">${e.message}</div>`;
   }
@@ -415,4 +449,4 @@ loadStatsHoy();
 loadVisitantes();
 </script>
 
-<?php require_once dirname(__DIR__) . '/../layout_footer.php'; ?>
+<?php require_once dirname(__DIR__) . '/layouts/footer.php'; ?>

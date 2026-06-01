@@ -1,5 +1,5 @@
 <?php
-require_once dirname(__DIR__) . '/../../config/config.php';
+require_once dirname(__DIR__) . '/../config/config.php';
 $modulo    = $_GET['modulo'] ?? 'auto';
 $pageTitle = match($modulo) {
     'comedor' => 'Escanear — Comedor',
@@ -7,7 +7,7 @@ $pageTitle = match($modulo) {
     default   => 'Escanear QR',
 };
 $activeNav = 'scanner';
-require_once dirname(__DIR__) . '/../layout_header.php';
+require_once dirname(__DIR__) . '/layouts/header.php';
 ?>
 
 <style>
@@ -215,13 +215,15 @@ require_once dirname(__DIR__) . '/../layout_header.php';
               <label class="form-label small fw-600 mb-1">Buscar por nombre, DNI o empresa</label>
               <div class="input-group">
                 <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
-                <input type="text" id="vis-buscar" class="form-control"
-                       placeholder="Escriba al menos 2 caracteres..."
-                       autocomplete="off" oninput="autocomplete(this.value)">
-                <button class="btn btn-outline-secondary" type="button"
-                        onclick="limpiarBusqueda()" title="Limpiar">
-                  <i class="bi bi-x"></i>
-                </button>
+                  <input type="text" id="vis-buscar" class="form-control"
+                      placeholder="Escriba al menos 2 caracteres..."
+                      autocomplete="off" 
+                      oninput="onFiltrarAutocomplete(this.value)"
+                      onkeyup="onFiltrarAutocomplete(this.value)">
+                  <button class="btn btn-outline-secondary" type="button"
+                          onclick="limpiarBusqueda()" title="Limpiar">
+                    <i class="bi bi-x"></i>
+                  </button>
               </div>
               <div id="autocomplete-list" style="display:none"></div>
             </div>
@@ -279,27 +281,30 @@ require_once dirname(__DIR__) . '/../layout_header.php';
           <div class="tab-pane fade" id="tab-nuevo" role="tabpanel">
             <div class="row g-3">
               <div class="col-12">
-                <label class="form-label small fw-600 mb-1">
-                  Nombre completo <span class="text-danger">*</span>
-                </label>
-                <input type="text" id="nv-nombre" class="form-control"
-                       placeholder="Apellidos y nombres del visitante">
+                <label class="form-label small fw-600">Nombre completo *</label>
+                <input type="text" id="n-nombre" class="form-control" placeholder="Apellidos y nombres">
               </div>
               <div class="col-12">
-                <label class="form-label small fw-600 mb-1">
-                  Empresa / Institución <span class="text-danger">*</span>
-                </label>
-                <input type="text" id="nv-empresa" class="form-control"
-                       placeholder="Empresa u organización de origen">
+                <label class="form-label small fw-600">Empresa / Institución *</label>
+                <input type="text" id="n-empresa" class="form-control" placeholder="Empresa u organización">
               </div>
-              <div class="col-6">
-                <label class="form-label small fw-600 mb-1">DNI <span class="text-muted">(opcional)</span></label>
-                <input type="text" id="nv-dni" class="form-control"
-                       placeholder="12345678" maxlength="15">
+              <div class="col-12">
+                <label class="form-label small fw-600">Observación (opcional)</label>
+                <input type="text" id="n-obs" class="form-control" placeholder="Ej: Motivo de la visita, proveedor, etc.">
               </div>
-              <div class="col-6">
-                <label class="form-label small fw-600 mb-1">Observación</label>
-                <input type="text" id="nv-obs" class="form-control" placeholder="Motivo de visita...">
+              <div class="col-12">
+                <label class="form-label small fw-600">Tipo de consumo inmediato</label>
+                <select id="n-tipo" class="form-select">
+                  <option value="AUTO">🍽️ Según horario automático</option>
+                  <option value="DESAYUNO">☕ Desayuno</option>
+                  <option value="ALMUERZO">🍽️ Almuerzo</option>
+                  <option value="CENA">🌙 Cena</option>
+                </select>
+              </div>
+              <div class="col-12 mt-4">
+                <button class="btn btn-success w-100 fw-600" onclick="guardarYRegistrarNuevoVisitante()">
+                  <i class="bi bi-check-circle-fill"></i> Registrar Entrada y Comedor
+                </button>
               </div>
             </div>
 
@@ -367,14 +372,23 @@ async function onScan(decodedText) {
   if (decodedText === lastQr && (now - lastQrTime) < COOLDOWN_MS) return;
   lastQr = decodedText; lastQrTime = now;
 
-  setStatus('Procesando...', 'scanning');
+     setStatus('Procesando...', 'scanning');
   try {
-    const res  = await fetch('<?= BASE_URL ?>/api/index.php?/api/scan', {
+    const res = await fetch('/asistencia-filomena-100/api/scan', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
       body: JSON.stringify({ qr: decodedText.trim(), modulo: currentModulo }),
     });
-    const json = await res.json();
+
+    // ── OBTENER EL TEXTO DIRECTO PARA VER EL ERROR DE PHP ──
+    const txt = await res.text(); 
+    console.log("RESPUESTA CRUDA DEL SERVIDOR:", txt); // <- AQUÍ VERÁS EL ERROR REAL DE PHP
+
+    // Intentamos parsear manualmente
+    const json = JSON.parse(txt);
 
     if (json.success) {
       playBeep(true);
@@ -388,8 +402,10 @@ async function onScan(decodedText) {
     }
   } catch(e) {
     playBeep(false);
-    setStatus('Error de conexión', 'error');
+    console.error("Detalle del fallo:", e); 
+    setStatus('Error de sintaxis en el servidor', 'error');
   }
+
   setTimeout(() => setStatus('Listo para escanear', 'scanning'), COOLDOWN_MS);
 }
 
@@ -447,8 +463,11 @@ function autocomplete(val) {
 
   acTimer = setTimeout(async () => {
     try {
-      const r = await fetch(`<?= BASE_URL ?>/api/index.php?/api/visitantes/buscar&q=${encodeURIComponent(val)}`);
-      const j = await r.json();
+      const r = await fetch(`<?= BASE_URL ?>/api/index.php?action=visitantes&sub=buscar&q=${encodeURIComponent(val)}`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json', 'ngrok-skip-browser-warning': 'true' }
+    });
+    const j = await r.json();
       renderAutocomplete(j.data || []);
     } catch(e) { list.style.display = 'none'; }
   }, 280);
@@ -484,37 +503,47 @@ function renderAutocomplete(items) {
 }
 
 function seleccionarVisitante(v) {
+  // Inicializamos las variables globales para las peticiones de los botones
   visSeleccionado = v;
+  seleccionadoId = v.id_visitante;
 
-  // Ocultar lista y limpiar input
-  document.getElementById('autocomplete-list').style.display = 'none';
-  document.getElementById('vis-buscar').value = v.nombre;
+  // Ocultar lista flotante de sugerencias
+  const listContainer = document.getElementById('autocomplete-list');
+  if (listContainer) listContainer.classList.add('d-none');
+  
+  // Ponemos el nombre del seleccionado en el buscador
+  const inputBuscar = document.getElementById('vis-buscar');
+  if (inputBuscar) inputBuscar.value = v.nombre;
 
-  // Rellenar card
-  document.getElementById('sel-nombre').textContent  = v.nombre;
-  document.getElementById('sel-empresa').textContent = '🏢 ' + v.empresa;
-  document.getElementById('sel-dni').textContent     = v.dni ? '🪪 DNI: ' + v.dni : '';
+  // Rellenamos las etiquetas de texto de tu tarjeta HTML real
+  document.getElementById('sel-nombre').textContent = v.nombre;
+  document.getElementById('sel-empresa').textContent = '🏢 ' + (v.empresa || '—');
+  
+  // Como tu tabla no tiene DNI, forzamos la celda en blanco para evitar errores
+  document.getElementById('sel-dni').textContent = ''; 
 
-  // Estado comidas hoy
-  const des = !!v.tuvo_desayuno;
-  const alm = !!v.tuvo_almuerzo;
-  const cen = !!v.tuvo_cena;
+  // ── ESTADO DE COMIDAS HOY ──
+  // Parseamos a enteros (1 o 0) para evaluar de forma segura en Android e iOS
+  const des = parseInt(v.tuvo_desayuno) ? true : false;
+  const alm = parseInt(v.tuvo_almuerzo) ? true : false;
+  const cen = parseInt(v.tuvo_cena)     ? true : false;
 
-  const badgeDes = document.getElementById('badge-des');
-  const badgeAlm = document.getElementById('badge-alm');
-  const badgeCen = document.getElementById('badge-cen');
-  badgeDes.classList.toggle('done', des);
-  badgeAlm.classList.toggle('done', alm);
-  badgeCen.classList.toggle('done', cen);
+  // Modificamos las clases de tus badges reales usando .toggle() de Bootstrap
+  document.getElementById('badge-des').classList.toggle('done', des);
+  document.getElementById('badge-alm').classList.toggle('done', alm);
+  document.getElementById('badge-cen').classList.toggle('done', cen);
 
-  // Deshabilitar botones ya registrados
+  // Deshabilitamos en tiempo real los botones si el visitante ya consumió el alimento hoy
   document.getElementById('btn-des-exist').disabled = des;
   document.getElementById('btn-alm-exist').disabled = alm;
   document.getElementById('btn-cen-exist').disabled = cen;
 
-  // Mostrar card, ocultar empty state
+  // Mostramos la tarjeta del visitante seleccionado en pantalla
   document.getElementById('vis-selected-card').classList.add('show');
-  document.getElementById('vis-empty-state').style.display = 'none';
+  
+  // Ocultamos el estado vacío de la interfaz si cuentas con él
+  const emptyState = document.getElementById('vis-empty-state');
+  if (emptyState) emptyState.classList.add('d-none');
 }
 
 function limpiarBusqueda() {
@@ -528,122 +557,163 @@ function limpiarBusqueda() {
 function limpiarSeleccion() { limpiarBusqueda(); }
 
 function limpiarNuevoForm() {
-  ['nv-nombre','nv-empresa','nv-dni','nv-obs'].forEach(id => {
+  ['n-nombre','n-empresa','n-obs'].forEach(id => {
     document.getElementById(id).value = '';
   });
 }
 
 // ── Registrar evento visitante EXISTENTE ─────────────────────
-async function registrarExistente(tipoEvento) {
-  if (!visSeleccionado) return;
-
-  const btn = document.getElementById('btn-' + tipoEvento.toLowerCase().substring(0,3) + '-exist');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-
-  try {
-    const r = await fetch('<?= BASE_URL ?>/api/index.php?/api/visitantes/evento', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        id_visitante: visSeleccionado.id_visitante,
-        tipo_evento:  tipoEvento,
-      }),
-    });
-    const j = await r.json();
-
-    if (j.success) {
-      playBeep(true);
-      showToast('success', j.message, j.data.nombre + ' · ' + j.data.empresa);
-      addLog({ nombre: j.data.nombre, evento: j.data.evento, hora: j.data.hora, tipo: 'visitante' }, true);
-
-      // Cerrar modal
-      bootstrap.Modal.getInstance(document.getElementById('modal-visitante')).hide();
-      limpiarBusqueda();
-    } else {
-      playBeep(false);
-      showToast('error', j.message);
-      btn.disabled = false;
-    }
-  } catch(e) {
-    playBeep(false);
-    showToast('error', 'Error de conexión');
-    btn.disabled = false;
+async function registrarExistente(tipo) {
+  // Validamos de forma estricta que tengamos una ID de visitante seleccionada
+  if (!seleccionadoId) {
+    alert("Por favor, selecciona primero un visitante de la lista");
+    return;
   }
 
-  // Restaurar texto botón
-  const labels = { DESAYUNO:'☕ Desayuno', ALMUERZO:'🍽️ Almuerzo', CENA:'🌙 Cena' };
-  btn.innerHTML = labels[tipoEvento] || tipoEvento;
+  try {
+    // ⚠️ CORRECCIÓN DEFINITIVA: Usamos ruta relativa pura eliminando BASE_URL
+    // Además, unificamos el endpoint al estándar nativo ?action=visitantes&sub=evento
+    const res = await fetch('/asistencia-filomena-100/api/index.php?action=visitantes&sub=evento', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'ngrok-skip-browser-warning': 'true' // Salta la advertencia intermedia de Ngrok
+      },
+      body: JSON.stringify({ 
+        id_visitante: seleccionadoId, 
+        tipo_evento: tipo 
+      })
+    });
+
+    if (!res.ok) {
+      throw new Error(`Servidor respondió con estado ${res.status}`);
+    }
+
+    const json = await res.json();
+
+    if (json.success) {
+      // 1. Cerrar el modal usando el framework nativo de Bootstrap
+      const modalEl = document.getElementById('modal-visitante');
+      const modalInstance = bootstrap.Modal.getInstance(modalEl);
+      if (modalInstance) modalInstance.hide();
+      
+      // 2. Pintamos el resultado en la tarjeta de éxito del scanner principal
+      if (typeof setStatus === 'function') setStatus(json.message, 'success');
+      if (typeof showResult === 'function') showResult(json.data);
+      if (typeof addLog === 'function') {
+        addLog({ 
+          persona: json.data.nombre, 
+          evento: json.data.evento, 
+          hora: json.data.hora, 
+          empresa: json.data.empresa 
+        }, true);
+      }
+      
+      // 3. Limpiamos el formulario para el siguiente uso
+      if (typeof limpiarBusqueda === 'function') limpiarBusqueda();
+      
+    } else {
+      alert("Atención: " + json.message);
+    }
+  } catch (e) {
+    console.error("Error crítico al registrar comedor manual:", e);
+    alert("Error de conexión: No se pudo enviar el registro. Verifique la red.");
+  }
 }
+
+// ⚠️ NOTA DE SEGURIDAD: Si en tu HTML los botones llaman a 'registrarComidaManual', 
+// simplemente duplicamos la referencia para que funcione con cualquiera de los dos nombres:
+window.registrarComidaManual = registrarExistente;
 
 // ── Registrar NUEVO visitante + evento ───────────────────────
 async function registrarNuevo(tipoEvento) {
-  const nombre  = document.getElementById('nv-nombre').value.trim();
-  const empresa = document.getElementById('nv-empresa').value.trim();
-  const dni     = document.getElementById('nv-dni').value.trim();
-  const obs     = document.getElementById('nv-obs').value.trim();
+  const nombre  = document.getElementById('n-nombre').value.trim();
+  const empresa = document.getElementById('n-empresa').value.trim();
+  const obs     = document.getElementById('n-obs').value.trim();
 
-  if (!nombre)  { showToast('error', 'El nombre es obligatorio'); document.getElementById('nv-nombre').focus(); return; }
-  if (!empresa) { showToast('error', 'La empresa es obligatoria'); document.getElementById('nv-empresa').focus(); return; }
+  if (!nombre)  { showToast('error', 'El nombre es obligatorio'); document.getElementById('n-nombre').focus(); return; }
+  if (!empresa) { showToast('error', 'La empresa es obligatoria'); document.getElementById('n-empresa').focus(); return; }
+
+  // Si el tipo de evento viene como AUTO, dejamos que el backend elija la comida del horario actual
+  const actualTipo = tipoEvento === 'AUTO' ? document.getElementById('n-tipo').value : tipoEvento;
 
   try {
-    const r = await fetch('<?= BASE_URL ?>/api/index.php?/api/visitantes/crear-y-registrar', {
+    // ⚠️ CORRECCIÓN 1: Ruta corregida al estándar ?action=... y removida la variable rota 'dni'
+    const r = await fetch('<?= BASE_URL ?>/api/index.php?action=visitantes&sub=crear-y-registrar', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ nombre, empresa, dni: dni||null, observacion: obs, tipo_evento: tipoEvento }),
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'ngrok-skip-browser-warning': 'true' // Salta el bloqueo de Ngrok en móviles
+      },
+      body: JSON.stringify({ nombre, empresa, observacion: obs, tipo_evento: actualTipo }),
     });
     const j = await r.json();
 
     if (j.success) {
-      playBeep(true);
+      if (typeof playBeep === 'function') playBeep(true);
+      
       showToast('success', j.message,
         j.data.nombre + ' · ' + j.data.empresa +
         (j.data.nuevo ? ' (nuevo)' : ' (existente)')
       );
-      addLog({ nombre: j.data.nombre, evento: j.data.evento, hora: j.data.hora, tipo: 'visitante' }, true);
+      
+      // Sincronizamos las claves con los nombres que espera tu función addLog para evitar campos vacíos
+      addLog({ persona: j.data.nombre, evento: j.data.evento, hora: j.data.hora, empresa: j.data.empresa }, true);
+      
       bootstrap.Modal.getInstance(document.getElementById('modal-visitante')).hide();
-      limpiarNuevoForm();
+      if (typeof abrirModalVisitante === 'function') abrirModalVisitante();
     } else {
-      playBeep(false);
+      if (typeof playBeep === 'function') playBeep(false);
       showToast('error', j.message);
     }
   } catch(e) {
+    console.error(e);
     showToast('error', 'Error de conexión');
   }
 }
 
 async function soloCrear() {
-  const nombre  = document.getElementById('nv-nombre').value.trim();
-  const empresa = document.getElementById('nv-empresa').value.trim();
-  const dni     = document.getElementById('nv-dni').value.trim();
+  const nombre  = document.getElementById('n-nombre').value.trim();
+  const empresa = document.getElementById('n-empresa').value.trim();
+  const obs     = document.getElementById('n-obs').value.trim();
 
   if (!nombre)  { showToast('error', 'El nombre es obligatorio'); return; }
   if (!empresa) { showToast('error', 'La empresa es obligatoria'); return; }
 
   try {
-    const r = await fetch('<?= BASE_URL ?>/api/index.php?/api/visitantes', {
+    // ⚠️ CORRECCIÓN 2: Ruta corregida a ?action=visitantes
+    const r = await fetch('<?= BASE_URL ?>/api/index.php?action=visitantes', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ nombre, empresa, dni: dni||null }),
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'ngrok-skip-browser-warning': 'true'
+      },
+      body: JSON.stringify({ nombre, empresa, observacion: obs }),
     });
     const j = await r.json();
 
     if (j.success) {
       showToast('success', 'Visitante registrado', nombre + ' — ' + empresa);
       bootstrap.Modal.getInstance(document.getElementById('modal-visitante')).hide();
-      limpiarNuevoForm();
+      if (typeof abrirModalVisitante === 'function') abrirModalVisitante();
     } else {
       showToast('error', j.message);
     }
   } catch(e) {
+    console.error(e);
     showToast('error', 'Error de conexión');
   }
 }
 
+
 // Cerrar autocomplete al hacer clic fuera
 document.addEventListener('click', e => {
-  if (!e.target.closest('#vis-buscar') && !e.target.closest('#autocomplete-list')) {
-    document.getElementById('autocomplete-list').style.display = 'none';
+  // ⚠️ CORRECCIÓN 3: Cambiado #vis-buscar por el ID real #vis-search
+  if (!e.target.closest('#vis-search') && !e.target.closest('#autocomplete-list')) {
+    document.getElementById('autocomplete-list').classList.add('d-none');
   }
 });
 
@@ -670,28 +740,119 @@ document.getElementById('vis-buscar').addEventListener('keydown', e => {
   }
 });
 
-// ── Inicializar QR scanner ───────────────────────────────────
-document.addEventListener('DOMContentLoaded', async () => {
-  try {
-    const devices = await Html5Qrcode.getCameras();
-    if (!devices?.length) { setStatus('No se encontró cámara', 'error'); return; }
+window.onFiltrarAutocomplete = async function(val) {
+  const listContainer = document.getElementById('autocomplete-list');
+  if (!listContainer) return; // Validación de seguridad
 
-    const camId = devices.length > 1
-      ? (devices.find(d => /back|rear|environment/i.test(d.label))?.id || devices[0].id)
-      : devices[0].id;
-
-    scanner = new Html5Qrcode('qr-reader');
-    await scanner.start(
-      { deviceId: camId },
-      { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
-      onScan,
-      () => {}
-    );
-    setStatus('Listo para escanear', 'scanning');
-  } catch(err) {
-    setStatus('Error de cámara — acceso manual disponible', 'error');
+  const query = val.trim();
+  
+  if (query.length < 2) {
+    listContainer.innerHTML = '';
+    listContainer.style.display = 'none';
+    listContainer.classList.add('d-none');
+    return;
   }
+
+  try {
+    // ⚠️ IMPORTANTE: Mantén comillas invertidas / backticks (`) para la URL
+    const r = await fetch(`/asistencia-filomena-100/api/index.php?action=visitantes&sub=buscar&q=${encodeURIComponent(query)}`, {
+      method: 'GET',
+      headers: { 
+        'Accept': 'application/json', 
+        'ngrok-skip-browser-warning': 'true' 
+      }
+    });
+    
+    if (!r.ok) throw new Error(`Status: ${r.status}`);
+    
+    const j = await r.json();
+    const data = j.data || [];
+
+    if (!data.length) {
+      listContainer.innerHTML = '<div class="p-3 text-muted small text-center bg-white border rounded-3">No se encontraron visitantes</div>';
+      // Forzamos la visualización removiendo cualquier clase oculta
+      listContainer.style.display = 'block';
+      listContainer.classList.remove('d-none');
+      return;
+    }
+
+    // Generamos las opciones del buscador
+    listContainer.innerHTML = data.map(v => {
+      const objetoSanitizado = JSON.stringify(v).replace(/'/g, "&apos;").replace(/"/g, '&quot;');
+      return `
+        <div class="ac-item" style="padding:.7rem 1rem; cursor:pointer; background:#fff; border-bottom:1px solid #eee;" onclick="seleccionarVisitante(${objetoSanitizado})">
+          <div class="fw-600" style="font-size:.9rem; color:#333;">${v.nombre}</div>
+          <div class="text-muted" style="font-size:.75rem;">🏢 ${v.empresa || '—'}</div>
+        </div>
+      `;
+    }).join('');
+    
+    // ⚠️ BLINDAJE VISUAL: Forzamos a que el navegador móvil dibuje la caja sí o sí
+    listContainer.style.zIndex = '9999';
+    listContainer.style.position = 'absolute';
+    listContainer.style.display = 'block';
+    listContainer.classList.remove('d-none');
+
+  } catch (e) {
+    console.error("Error crítico en autocomplete:", e);
+    listContainer.innerHTML = '<div class="p-2 text-danger small text-center bg-white border">Error al cargar la lista</div>';
+    listContainer.style.display = 'block';
+    listContainer.classList.remove('d-none');
+  }
+};
+
+// Función complementaria para limpiar el buscador al presionar la 'X'
+window.limpiarBusqueda = function() {
+  const input = document.getElementById('vis-buscar');
+  if (input) input.value = '';
+  
+  const listContainer = document.getElementById('autocomplete-list');
+  if (listContainer) {
+    listContainer.innerHTML = '';
+    listContainer.classList.add('d-none');
+  }
+  
+  const card = document.getElementById('vis-selected-card');
+  if (card) card.classList.remove('show');
+  
+  visSeleccionado = null;
+  seleccionadoId = null;
+};
+
+// Oyente global para cerrar la lista flotante si el usuario hace clic en otra parte de la pantalla
+document.addEventListener('click', e => {
+  if (!e.target.closest('#vis-buscar') && !e.target.closest('#autocomplete-list')) {
+    const listContainer = document.getElementById('autocomplete-list');
+    if (listContainer) listContainer.classList.add('d-none');
+  }
+});
+
+// ── Inicializar QR scanner ───────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  // Inicializamos el objeto directamente con el ID del contenedor HTML
+  scanner = new Html5Qrcode('qr-reader');
+
+  // Iniciamos directamente usando restricciones de entorno (cámara trasera)
+  scanner.start(
+    { facingMode: "environment" }, // <--- Fuerza el uso de la cámara trasera sin pedir IDs previos
+    { 
+      fps: 10, 
+      qrbox: { width: 250, height: 250 }, 
+      aspectRatio: 1.0 
+    },
+    onScan,
+    (errorMessage) => {
+      // Error silencioso mientras busca el QR en el feed de video
+    }
+  )
+  .then(() => {
+    setStatus('Listo para escanear', 'scanning');
+  })
+  .catch((err) => {
+    console.error("Error detallado:", err);
+    setStatus('Error de cámara — verifique permisos o use HTTPS', 'error');
+  });
 });
 </script>
 
-<?php require_once dirname(__DIR__) . '/../layout_footer.php'; ?>
+<?php require_once dirname(__DIR__) . '/layouts/footer.php'; ?>

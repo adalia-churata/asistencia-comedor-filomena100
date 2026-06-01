@@ -39,8 +39,9 @@ class ExportController
 
         $rows = [];
 
-        // ── Trabajadores ──────────────────────────────────────
+        // ── 1. Trabajadores (Leen de eventos_personal) ──────────────────────
         if ($persona !== 'visitante') {
+            // ⚠️ CORRECCIÓN: Se eliminó ep.tipo_persona de la cláusula WHERE
             $sql = "SELECT DATE(ep.fecha_hora) AS fecha, TIME(ep.fecha_hora) AS hora,
                            ep.tipo_evento, 'TRABAJADOR' AS tipo_persona,
                            t.nombre_completo AS nombre, t.dni,
@@ -48,34 +49,32 @@ class ExportController
                     FROM eventos_personal ep
                     JOIN trabajadores t ON t.id_trabajador = ep.id_trabajador
                     JOIN areas a ON a.id_area = t.id_area
-                    WHERE ep.tipo_persona = 'TRABAJADOR'
-                      AND ep.tipo_evento IN ('DESAYUNO','ALMUERZO','CENA')
+                    WHERE ep.tipo_evento IN ('DESAYUNO','ALMUERZO','CENA')
                       AND DATE(ep.fecha_hora) BETWEEN ? AND ?";
             $params = [$desde, $hasta];
             if ($area)   { $sql .= " AND t.id_area = ?";        $params[] = $area; }
             if ($trabId) { $sql .= " AND ep.id_trabajador = ?"; $params[] = $trabId; }
             if ($tipo)   { $sql .= " AND ep.tipo_evento = ?";   $params[] = $tipo; }
-            $rows = array_merge($rows, Database::fetchAll($sql . " ORDER BY ep.fecha_hora DESC", $params));
+            $rows = array_merge($rows, Database::fetchAll($sql, $params));
         }
 
-        // ── Visitantes ────────────────────────────────────────
+        // ── 2. Visitantes (Leen de tu TABLA REAL: consumo_visitantes) ────────
         if ($persona !== 'trabajador') {
-            $sql = "SELECT DATE(ep.fecha_hora) AS fecha, TIME(ep.fecha_hora) AS hora,
-                           ep.tipo_evento, 'VISITANTE' AS tipo_persona,
-                           v.nombre, v.dni,
+            // ⚠️ CORRECCIÓN: Apunta a consumo_visitantes, quitado v.dni y ep.tipo_persona
+            $sql = "SELECT DATE(cv.fecha_hora) AS fecha, TIME(cv.fecha_hora) AS hora,
+                           cv.tipo_comida AS tipo_evento, 'VISITANTE' AS tipo_persona,
+                           v.nombre, '' AS dni,
                            'Visitante' AS nombre_area, '' AS cargo, v.empresa
-                    FROM eventos_personal ep
-                    JOIN visitantes v ON v.id_visitante = ep.id_visitante
-                    WHERE ep.tipo_persona = 'VISITANTE'
-                      AND ep.tipo_evento IN ('DESAYUNO','ALMUERZO','CENA')
-                      AND DATE(ep.fecha_hora) BETWEEN ? AND ?";
+                    FROM consumo_visitantes cv
+                    JOIN visitantes v ON v.id_visitante = cv.id_visitante
+                    WHERE DATE(cv.fecha_hora) BETWEEN ? AND ?";
             $params = [$desde, $hasta];
-            if ($tipo) { $sql .= " AND ep.tipo_evento = ?"; $params[] = $tipo; }
-            $rows = array_merge($rows, Database::fetchAll($sql . " ORDER BY ep.fecha_hora DESC", $params));
+            if ($tipo) { $sql .= " AND cv.tipo_comida = ?"; $params[] = $tipo; }
+            $rows = array_merge($rows, Database::fetchAll($sql, $params));
         }
 
-        // Ordenar por fecha desc
-        usort($rows, fn($a, $b) => strcmp($b['fecha'] . $b['hora'], $a['fecha'] . $a['hora']));
+        // Ordenar de más antiguo a más reciente para el reporte unificado
+        usort($rows, fn($a, $b) => strcmp($a['fecha'] . $a['hora'], $b['fecha'] . $b['hora']));
 
         self::csvHeaders("comedor_{$desde}_{$hasta}.csv");
 
@@ -84,7 +83,7 @@ class ExportController
         foreach ($rows as $r) {
             fputcsv($out, [
                 $r['fecha'], $r['hora'], $r['tipo_evento'], $r['tipo_persona'],
-                $r['nombre'], $r['dni'] ?? '', $r['nombre_area'], $r['cargo'], $r['empresa'],
+                $r['nombre'], $r['dni'], $r['nombre_area'], $r['cargo'], $r['empresa'],
             ], ';');
         }
         fclose($out);
@@ -97,31 +96,43 @@ class ExportController
         $hasta  = $_GET['hasta'] ?? date('Y-m-d');
         $area   = $_GET['area']   ?? null;
         $trabId = $_GET['trabajador'] ?? null;
-        $horasProg = (int)(Database::fetchOne(
-            "SELECT valor FROM config_sistema WHERE clave='horas_programadas_dia'"
-        )['valor'] ?? HORAS_PROGRAMADAS_DEFAULT);
 
-        $sql = "SELECT v.fecha,
-                       v.nombre_completo,
-                       v.dni,
-                       v.nombre_area,
-                       v.cargo,
-                       v.empresa,
-                       TIME(v.hora_ingreso)        AS hora_ingreso,
-                       TIME(v.hora_salida_break)   AS salida_break,
-                       TIME(v.hora_ingreso_break)  AS ingreso_break,
-                       TIME(v.hora_salida_trabajo) AS salida_trabajo,
-                       ROUND(v.minutos_netos/60,2) AS horas_netas,
-                       $horasProg                  AS horas_programadas,
-                       ROUND((v.minutos_netos/60)-$horasProg,2) AS diferencia,
-                       CASE WHEN (v.minutos_netos/60)>=$horasProg THEN 'Extra'
-                            ELSE 'Deficitaria' END AS tipo_diferencia
-                FROM v_asistencia_diaria v
-                WHERE v.fecha BETWEEN ? AND ?";
+        $sql = "SELECT 
+                    DATE(ep.fecha_hora) AS fecha,
+                    t.nombre_completo,
+                    t.dni,
+                    a.nombre_area,
+                    t.cargo,
+                    t.empresa,
+                    TIME(MAX(CASE WHEN ep.tipo_evento = 'INGRESO' THEN ep.fecha_hora END)) AS hora_ingreso,
+                    TIME(MAX(CASE WHEN ep.tipo_evento = 'SALIDA_BREAK' THEN ep.fecha_hora END)) AS salida_break,
+                    TIME(MAX(CASE WHEN ep.tipo_evento = 'REGRESO_BREAK' THEN ep.fecha_hora END)) AS ingreso_break,
+                    TIME(MAX(CASE WHEN ep.tipo_evento = 'SALIDA_TRABAJO' THEN ep.fecha_hora END)) AS salida_trabajo,
+                    
+                    -- Horas netas calculadas
+                    ROUND((IFNULL(TIMESTAMPDIFF(MINUTE, MAX(CASE WHEN ep.tipo_evento = 'INGRESO' THEN ep.fecha_hora END), MAX(CASE WHEN ep.tipo_evento = 'SALIDA_TRABAJO' THEN ep.fecha_hora END)), 0) - IFNULL(TIMESTAMPDIFF(MINUTE, MAX(CASE WHEN ep.tipo_evento = 'SALIDA_BREAK' THEN ep.fecha_hora END), MAX(CASE WHEN ep.tipo_evento = 'REGRESO_BREAK' THEN ep.fecha_hora END)), 0)) / 60, 2) AS horas_netas,
+                    
+                    -- Horas programadas del turno rotativo
+                    11.00 AS horas_programadas,
+                    
+                    -- Diferencia
+                    ROUND(((IFNULL(TIMESTAMPDIFF(MINUTE, MAX(CASE WHEN ep.tipo_evento = 'INGRESO' THEN ep.fecha_hora END), MAX(CASE WHEN ep.tipo_evento = 'SALIDA_TRABAJO' THEN ep.fecha_hora END)), 0) - IFNULL(TIMESTAMPDIFF(MINUTE, MAX(CASE WHEN ep.tipo_evento = 'SALIDA_BREAK' THEN ep.fecha_hora END), MAX(CASE WHEN ep.tipo_evento = 'REGRESO_BREAK' THEN ep.fecha_hora END)), 0)) / 60) - 11.00, 2) AS diferencia,
+                    
+                    -- Tipo de diferencia
+                    CASE WHEN ((IFNULL(TIMESTAMPDIFF(MINUTE, MAX(CASE WHEN ep.tipo_evento = 'INGRESO' THEN ep.fecha_hora END), MAX(CASE WHEN ep.tipo_evento = 'SALIDA_TRABAJO' THEN ep.fecha_hora END)), 0) - IFNULL(TIMESTAMPDIFF(MINUTE, MAX(CASE WHEN ep.tipo_evento = 'SALIDA_BREAK' THEN ep.fecha_hora END), MAX(CASE WHEN ep.tipo_evento = 'REGRESO_BREAK' THEN ep.fecha_hora END)), 0)) / 60) >= 11.00 THEN 'Extra' ELSE 'Deficitaria' END AS tipo_diferencia
+                    
+                FROM eventos_personal ep
+                JOIN trabajadores t ON t.id_trabajador = ep.id_trabajador
+                JOIN areas a ON a.id_area = t.id_area
+                WHERE ep.tipo_evento IN ('INGRESO', 'SALIDA_BREAK', 'REGRESO_BREAK', 'SALIDA_TRABAJO')
+                  AND DATE(ep.fecha_hora) BETWEEN ? AND ?";
+                
         $params = [$desde, $hasta];
-        if ($area)   { $sql .= " AND v.id_trabajador IN (SELECT id_trabajador FROM trabajadores WHERE id_area=?)"; $params[]=$area; }
-        if ($trabId) { $sql .= " AND v.id_trabajador=?"; $params[]=$trabId; }
-        $sql .= " ORDER BY v.fecha DESC, v.nombre_completo ASC";
+        if ($area)   { $sql .= " AND t.id_area = ?"; $params[] = $area; }
+        if ($trabId) { $sql .= " AND ep.id_trabajador = ?"; $params[] = $trabId; }
+        
+        $sql .= " GROUP BY DATE(ep.fecha_hora), t.id_trabajador 
+                  ORDER BY DATE(ep.fecha_hora) DESC, t.nombre_completo ASC";
 
         $rows = Database::fetchAll($sql, $params);
 
