@@ -257,6 +257,9 @@
     <a href="<?= BASE_URL ?>/views/scanner/index.php" class="<?= ($activeNav??'')==='scanner'?'active':'' ?>">
       <i class="bi bi-qr-code-scan"></i> Escanear QR
     </a>
+    <a href="<?= BASE_URL ?>/views/reportes/carga_historica.php" class="<?= ($activeNav??'')==='carga-historica'?'active':'' ?>">
+      <i class="bi bi-pencil-square"></i> Transcribir Hojas
+    </a>
 
     <div class="nav-label">Registros</div>
     <a href="<?= BASE_URL ?>/views/comedor/index.php" class="<?= ($activeNav??'')==='comedor'?'active':'' ?>">

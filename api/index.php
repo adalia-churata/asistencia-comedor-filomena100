@@ -549,6 +549,40 @@ if ($resource === 'areas' && $method === 'GET') {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  POST /api/carga-historica (Transcripción por ID desde Autocomplete)
+// ═══════════════════════════════════════════════════════════════
+if ($resource === 'carga-historica' && $method === 'POST') {
+    $registros = $body['registros'] ?? [];
+    
+    if (empty($registros)) Response::error('No se enviaron registros.');
+
+    $insertados = 0;
+
+    foreach ($registros as $reg) {
+        $tipoPersona = $reg['tipo_persona'];
+        $idPersona   = (int)$reg['id_persona'];
+        $fechaHora   = $reg['fecha'] . ' ' . $reg['hora'] . ':00';
+        $tipoEvento  = $reg['tipo_evento'];
+
+        if ($tipoPersona === 'TRABAJADOR') {
+            // Inserción directa limpia en la tabla de personal
+            $sql = "INSERT INTO eventos_personal (id_trabajador, fecha_hora, tipo_evento, observacion) 
+                    VALUES (?, ?, ?, 'CARGA_HISTORICA')";
+            Database::query($sql, [$idPersona, $fechaHora, $tipoEvento]);
+            $insertados++;
+        } else {
+            // Inserción directa limpia en tu tabla real de consumos de visitas
+            $sql = "INSERT INTO consumo_visitantes (id_visitante, fecha_hora, tipo_comida) 
+                    VALUES (?, ?, ?)";
+            Database::query($sql, [$idPersona, $fechaHora, $tipoEvento]);
+            $insertados++;
+        }
+    }
+
+    Response::success(null, "Se transcribieron exitosamente {$insertados} registros a la base de datos.");
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  GET /api/export/*
 // ═══════════════════════════════════════════════════════════════
 if ((str_starts_with($resource, 'export') || $resource === 'export') && $method === 'GET') {
